@@ -17,7 +17,7 @@ export async function spendUserBonus(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { bodyRequestId } = req.body;
+    const bodyRequestId = req.body.requestId;
 
     const idempotencyKey = req.headers['Idempotency-Key'];
 
@@ -50,9 +50,22 @@ export async function enqueueExpireAccrualsJob(
   next: NextFunction,
 ): Promise<void> {
   try {
-    await bonusQueue.add('expireAccruals', {
-      createdAt: new Date().toISOString(),
-    });
+    await bonusQueue.add(
+      'expireAccruals',
+      {
+        createdAt: new Date().toISOString(),
+      },
+      {
+        // job id одинаковый для каждого запроса; идемпотентность соблюдается
+        jobId: 'expire-accruals',
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 1000,
+        },
+        removeOnComplete: true,
+      },
+    );
 
     res.json({ queued: true });
   } catch (error) {

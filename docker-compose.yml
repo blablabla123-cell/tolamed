@@ -2,19 +2,20 @@ name: bonus-backend
 
 services:
   api:
+    container_name: tolamed-app
     build: .
     ports:
-      - '3000:3000'
+      - "127.0.0.1:${PORT-3000}:3000"
     environment:
-      PORT: 3000
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: appdb
-      DB_USER: app
-      DB_PASSWORD: app
-      DATABASE_URL: postgres://app:app@postgres:5432/appdb
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      PORT: ${PORT}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
     develop:
       watch:
         - action: sync+restart
@@ -33,27 +34,74 @@ services:
     command: sh -c "npm run migrate && npm run dev"
 
   postgres:
+    container_name: tolamed-postgres
+    command: 
+      - "-c"
+      - "max_connections=50"
+      - "-c"
+      - "shared_buffers=1GB"
+      - "-c"
+      - "effective_cache_size=4GB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=512MB"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "temp_file_limit=10GB"
+      - "-c"
+      - "log_min_duration_statement=200ms"
+      - "-c"
+      - "idle_in_transaction_session_timeout=10s"
+      - "-c"
+      - "lock_timeout=1s"
+      - "-c"
+      - "statement_timeout=60s"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.max=10000"
+      - "-c"
+      - "pg_stat_statements.track=all"
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: appdb
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "127.0.0.1:${DB_PORT-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/seed.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U app -d appdb']
-      interval: 5s
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER} -d ${DB_NAME}']
+      interval: 10s
       timeout: 5s
-      retries: 20
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+     resources:
+       limits:
+         cpus: '1'
+         memory: 1G
 
   redis:
+    container_name: tolamed-redis
     image: redis:7-alpine
+    ports:
+      - "127.0.0.1:${REDIS_PORT-6379}:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
 volumes:
   postgres_data:
+  redis-data:

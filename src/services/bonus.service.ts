@@ -13,7 +13,7 @@ function createAppError(message: string, status: number): AppError {
 export async function getUserBalance(
   userId: string,
   // Передаем транзакцию, чтобы избежать гонки
-  transaction: Transaction,
+  transaction?: Transaction,
 ): Promise<number> {
   // Текущая дата
   const now = new Date();
@@ -24,7 +24,7 @@ export async function getUserBalance(
       user_id: userId,
     },
     transaction: transaction,
-    lock: transaction.LOCK.UPDATE,
+    lock: transaction?.LOCK.UPDATE,
   });
 
   let balance = 0;

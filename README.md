@@ -55,6 +55,7 @@ docker compose down -v
 ```
 
 4. Как реализована защита от повторного одинакового запроса (`duplicate request`)?
+
 ```
 Опять же на уровне бд уникальный индекс не позволяет создать запись для того же пользователя с тем же requestId.
 
@@ -66,4 +67,110 @@ docker compose down -v
 
 ```
 Поскольку при начислении бонуса мы присваиваем полю expires_at дату ее просрочки (дата начисления плюс тридцать дней), мы можем проверить в момент списания если expires_at дата больше даты списания: в этом случае нам ясно, что это начисление больше не актуально и мы не можем его учитывать при расчете баланса.
+```
+
+6. Как реализована надежная обработка очереди (повторные попытки, паузы, защита от дублей)?
+
+```
+В первую очередь, при ошибке в очереди у нас будет несколько попыток повторить операцию (attempts: 3), между попытками применяется пауза (delay: 1000 мс). Паузы экспоненциональны (type: 'exponential'), то есть пауза увеличиваются с каждой итерацией, что помогает дождаться восстановления системы бд и восстановить работу.
+
+Во-вторых, поскольку мы назначаем тот же самый jobId при каждом запросу `/jobs/expire-accruals`, то мы предотвращаем создание одинаковой задачи.
+
+Ну, и на уровне БД поскольку у нас есть уже ограничение уникальности по (user_id, request_id) то записи с одинаковыми requestId (expire:<accrual_id>) будут пропущены.
+```
+
+7. Какие компромиссы вы приняли в рамках ограничения `4–6 часов`?
+
+Я предполагаю, что еще можно было бы записывать историю транзакций в отдельной таблице (например, transaction_logs), чтобы могли пересчитывать баланс и проверять его корректность.
+
+Можно добавить версионирование строки в таблице, что б отследить не измениться ли документ в процессе нагрузки отдельным полем, например version: 1, который будет увеличиваться с каждой Update операцией и проверять этот факт.
+
+Можно было бы кэшировать баланс в Redis для ускорения и инвалидировать его при новых операциях.
+
+По поводу тестов, здесь можно было бы создать docker-compose.test.yml с .env.test, чтобы запускать тесты на отдельной конфигурации БД. Чтобы сэкономить время я написал mock-и. Также Edge-case тесты пропустил, для экономии времени.
+
+Тесты запускаем через npm run:test script
+
+Также предусматриваю примерный CI/CD
+
+```
+Step 1: Проверяем покрытие тестами (`test stage`): Если покрытие < 70% останавливаем pipeline;
+
+Step 2: В противном случае мы собираем Docker image с `commit-sha` тэгом и пушим в registry
+
+Step 3: Если сборка собралась успешно мы деплоим на тестовый сервер (`deploy stage`).
+```
+
+GitLab
+
+```
+
+stages:
+    - test
+    - build
+    - deploy
+
+variables:
+    CI_REGISTRY_IMAGE: $CI_REGISTRY/tolamed
+
+before_script
+    - npm ci
+```
+
+# Test stage
+
+```
+test:unit:
+    stage: test
+    image: node:20-alpine
+    script:
+        - npm run test:cov
+    artifacts:
+        paths:
+            - coverage/
+        expire_in: 1 day
+
+check-coverage:
+    stage: test
+    image: node:20-alpine
+    script:
+        - npm run coverage:check
+```
+
+# Build stage
+
+```
+build:
+    stage: build
+    image: docker:latest
+    services:
+        - docker:dind
+    variables:
+        DOCKER_TLS_CERTDIR: "/certs"
+    script:
+        - docker login -u "$CI_REGISTRY_USER" -p $CI_REGISTRY_PASSWORD" $CI_REGISTRY
+        - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+        - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+```
+
+Deploy stage
+
+```
+deploy-test:
+    stage: deploy
+    image: alpine:latest
+    before_script:
+        - apk add --no-cache opessh-client
+        - chmod 600 ~/.ssh/id_rsa
+        - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+   script:
+    - ssh $DEPLOY_USER@$DEPLOY_HOST "
+        docker login -u $REGISTRY_USER -p $REGISTRY_PASSWORD $CI_REGISTRY &&
+        docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA &&
+        docker stop tolamed || true &&
+        docker rm tolamed || true &&
+        docker run -d --name tolamed -p 3000:3000 $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+      "
+    only:
+        - main
 ```
