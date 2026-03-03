@@ -17,15 +17,28 @@ export async function spendUserBonus(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const { bodyRequestId } = req.body;
+
+    const idempotencyKey = req.headers['Idempotency-Key'];
+
+    const requestId = bodyRequestId || idempotencyKey;
+
+    if (!requestId) {
+      throw createAppError(
+        `"requestId" or "Idempotency-Key" header is required`,
+        400,
+      );
+    }
+
     const amount = Number(req.body?.amount);
 
     if (!Number.isInteger(amount) || amount <= 0) {
-      throw createAppError('amount must be a positive integer', 400);
+      throw createAppError('Amount must be a positive integer', 400);
     }
 
-    await spendBonus(req.params.id, amount);
+    const dublicated = await spendBonus(req.params.id, amount, requestId);
 
-    res.json({ success: true });
+    res.status(200).json({ success: true, dublicated: dublicated });
   } catch (error) {
     next(error);
   }
